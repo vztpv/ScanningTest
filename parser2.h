@@ -25,19 +25,19 @@ namespace clau_test {
 
 	class PreTokenUtil {
 	public:
-		static uint8_t upper_part(uint8_t x) {
-			return x >> 4;
+		static uint16_t upper_part(uint16_t x) {
+			return x >> 8;
 		}
-		static uint8_t lower_part(uint8_t x) {
-			return x & 0xF; // 0b1111
+		static uint16_t lower_part(uint16_t x) {
+			return x & 0xFF; // 0b1111 1111
 		}
-		static uint8_t make_upper(uint8_t x, uint8_t val) {
+		static uint16_t make_upper(uint16_t x, uint16_t val) {
 			x = lower_part(x);
 			val = lower_part(val);
 
-			return x + (val << 4);
+			return x + (val << 8);
 		}
-		static uint8_t make_lower(uint8_t x, uint8_t val) {
+		static uint16_t make_lower(uint16_t x, uint16_t val) {
 			x = upper_part(x);
 			val = lower_part(val);
 
@@ -64,7 +64,7 @@ namespace clau_test {
 		STRING, DATA
 	};
 
-	inline uint8_t char_to_token_type[256]; // char to pretoken type.
+	inline uint16_t char_to_token_type[256]; // char to pretoken type.
 class Utility {
 	private:
 		class BomInfo
@@ -220,7 +220,7 @@ class Utility {
 	class InFileReserver
 	{
 	private:
-		static size_t _Scanning(char* text, size_t length, int64_t* _count) {
+		static size_t _Scanning(char* text, size_t length, uint16_t* tokens) {
 			int a = clock();
 			int64_t count = 0;
 
@@ -361,31 +361,32 @@ class Utility {
 							size_t diff = i - before_idx;
 
 							
-							if (diff > 14) {
-								diff = 15; // infinite? - find using simd..
+							if (diff > 254) {
+								diff = 255; // infinite? - find using simd..
 							}
 
-							text[i] = PreTokenUtil::make_upper(text[i], char_to_token_type[text[i]]);
-							text[i] = PreTokenUtil::make_lower(text[i], 0); // represent end?
+							tokens[count] = PreTokenUtil::make_upper(tokens[count], char_to_token_type[text[i]]);
+							tokens[count] = PreTokenUtil::make_lower(tokens[count], 0); // represent end?
 
-							text[before_idx] = PreTokenUtil::make_lower(text[before_idx], diff);
+							tokens[count] = PreTokenUtil::make_lower(tokens[before_idx], diff);
 
 							before_idx = i;
 						}
 						else {
 							// count == 0
 							// first -> using simd to find first token. - text is changed...
-							text[i] = PreTokenUtil::make_upper(text[i], char_to_token_type[text[i]]);
-							text[i] = PreTokenUtil::make_lower(text[i], 0); // represent end?
+							tokens[count] = PreTokenUtil::make_upper(tokens[count], char_to_token_type[text[i]]);
+							tokens[count] = PreTokenUtil::make_lower(tokens[count], 0); // represent end?
 
 							before_idx = i;
 							is_first = false;
 						}
+
 						++count;
 					}
 				}
 			}
-			*_count = count;
+			
 			int b = clock();
 			std::cout << b - a << "ms\n";
 
@@ -521,260 +522,81 @@ class Utility {
 
 			size_t tokens_max = (32 + (length + 1) / thr_num) * thr_num;
 
-			uint8_t* tokens = (uint8_t*)calloc(length + 1, sizeof(uint8_t));
-			
-			if (tokens) {
-				memcpy(tokens, text, length + 1);
-			}
-			else {
-				// calloc error
-			}
+			uint16_t* tokens = (uint16_t*)calloc(length, sizeof(uint16_t));
 
 			int64_t token_count = 0;
-			int64_t pre_token_count = 0;
+			int64_t pre_token_count = 0; // todo? - std::vector<int64_t> ?
 
 			std::vector<size_t> token_arr_size(thr_num);
 			auto a = std::chrono::steady_clock::now();
 			
 			for (int i = 0; i < thr_num; ++i) {
-				thr[i] = std::thread(_Scanning, text + start[i], last[i] - start[i], &pre_token_count);
+				thr[i] = std::thread(_Scanning, text + start[i], last[i] - start[i], tokens + start[i]);
 			}
 
 			for (int i = 0; i < thr_num; ++i) {
 				thr[i].join();
 			}
 
-			if (false) {
-				// make func?
-				char_to_token_type['\"'] = STRING;
-				char_to_token_type[','] = COMMA;
-				char_to_token_type['{'] = LEFT_BRACE;
-				char_to_token_type['['] = LEFT_BRACKET;
-				char_to_token_type['}'] = RIGHT_BRACE;
-				char_to_token_type[']'] = RIGHT_BRACKET;
-				char_to_token_type[':'] = COLON;
-			//	char_to_token_type['t'] = TRUE;
-			//	char_to_token_type['f'] = FALSE;
-			//	char_to_token_type['n'] = _NULL;
-			//	char_to_token_type['-'] = char_to_token_type['0'] = char_to_token_type['1'] = char_to_token_type['2'] = char_to_token_type['3'] = char_to_token_type['4'] \
-			//		= char_to_token_type['5'] = char_to_token_type['6'] = char_to_token_type['7'] = char_to_token_type['8'] = char_to_token_type['9'] = NUMBER;
-				//~make func?
-
-				size_t count = 0;
-				{
-					size_t before_idx = 0;
-
-					for (size_t i = 1; i < length; ++i) {
-						const char ch = text[i];
-						switch (ch) {
-							//string
-						case '\"':
-							//comma
-						case ',':
-							//for object or array
-						case '{':
-						case '[':
-						case '}':
-						case ']':
-						case ':':
-							//true
-						case 't':
-							//false
-						case 'f':
-							// null
-						case 'n':
-							// number
-						case '0':
-						case '1':case'2':case'3':case'4':case'5':case'6':case'7':case'8':case'9':
-						case '-':
-						{
-							text[i] = PreTokenUtil::make_upper(text[i], char_to_token_type[text[i]]);
-							text[i] = PreTokenUtil::make_lower(text[i], 0);
-
-							size_t diff = i - before_idx;
-							if (diff > 14) {
-								diff = 15;
-							}
-
-							text[before_idx] = PreTokenUtil::make_lower(text[before_idx], diff);
-						}
-						break;
-						default:
-							continue;
-							break;
-						}
-						before_idx = i;
-					}
-				}
-			}
 			auto b = std::chrono::steady_clock::now();
-			
-#ifdef USE_SIMD2
 
-			int idx = -1;
-
-			int state = 0;
-			int start_idx = -1;
-
-			__m256i _1st, _2nd, _3rd;
-
-			char ch1 = (char)TokenType::BACK_SLUSH;
-			_1st = _mm256_set_epi8(ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1,
-				ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1, ch1);
-			char ch2 = (char)TokenType::QUOTED;
-			_2nd = _mm256_set_epi8(ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2,
-				ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2, ch2);
-			char ch3 = 1;
-			_3rd = _mm256_set_epi8(ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3,
-				ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3, ch3);
-
-			for (size_t t = 0; t < thr_num; ++t) {
-				for (size_t j = 0; j < token_arr_size[t]; j = j + 32) {
-					__m256i _back_slush, _q, _even;
-					unsigned int back_slush, even = 0, odd = 0, s, es, ec, ece, od1, os, oc, oce, od2,
-						od, q;
-
-					const int i = start[t] + j;
-
-					_back_slush = _mm256_setr_epi8(TokenUtil::type(tokens[i]), TokenUtil::type(tokens[i + 1]), TokenUtil::type(tokens[i + 2]),
-						TokenUtil::type(tokens[i + 3]), TokenUtil::type(tokens[i + 4]), TokenUtil::type(tokens[i + 5]), TokenUtil::type(tokens[i + 6])
-						, TokenUtil::type(tokens[i + 7]), TokenUtil::type(tokens[i + 8]), TokenUtil::type(tokens[i + 9]), TokenUtil::type(tokens[i + 10]),
-						TokenUtil::type(tokens[i + 11]), TokenUtil::type(tokens[i + 12]), TokenUtil::type(tokens[i + 13]), TokenUtil::type(tokens[i + 14])
-						, TokenUtil::type(tokens[i + 15]), TokenUtil::type(tokens[i + 16]), TokenUtil::type(tokens[i + 17]), TokenUtil::type(tokens[i + 18]),
-						TokenUtil::type(tokens[i + 19]), TokenUtil::type(tokens[i + 20]), TokenUtil::type(tokens[i + 21]), TokenUtil::type(tokens[i + 22])
-						, TokenUtil::type(tokens[i + 23]), TokenUtil::type(tokens[i + 24]), TokenUtil::type(tokens[i + 25]), TokenUtil::type(tokens[i + 26]),
-						TokenUtil::type(tokens[i + 27]), TokenUtil::type(tokens[i + 28]), TokenUtil::type(tokens[i + 29]), TokenUtil::type(tokens[i + 30])
-						, TokenUtil::type(tokens[i + 31]));
-
-					_q = _back_slush;
-
-					back_slush = _mm256_movemask_epi8(_mm256_cmpeq_epi8(_back_slush, _1st));
-					q = _mm256_movemask_epi8(_mm256_cmpeq_epi8(_q, _2nd));
-
-					_even = _mm256_setr_epi8(f(&tokens[i]), f(&tokens[i + 1]), f(&tokens[i + 2]), f(&tokens[i + 3]), f(&tokens[i + 4]), f(&tokens[i + 5]), f(&tokens[i + 6])
-						, f(&tokens[i + 7]), f(&tokens[i + 8]), f(&tokens[i + 9]), f(&tokens[i + 10]), f(&tokens[i + 11]), f(&tokens[i + 12]), f(&tokens[i + 13]), f(&tokens[i + 14])
-						, f(&tokens[i + 15]), f(&tokens[i + 16]), f(&tokens[i + 17]), f(&tokens[i + 18]), f(&tokens[i + 19]), f(&tokens[i + 20]), f(&tokens[i + 21]), f(&tokens[i + 22])
-						, f(&tokens[i + 23]), f(&tokens[i + 24]), f(&tokens[i + 25]), f(&tokens[i + 26]), f(&tokens[i + 27]), f(&tokens[i + 28]), f(&tokens[i + 29]), f(&tokens[i + 30])
-						, f(&tokens[i + 31]));
-
-
-					even = _mm256_movemask_epi8(_even); // _mm256_cmpeq_epi8(_q, _3rd));
-
-					//todo - _even , even.
-
-					odd = ~even;
-					s = back_slush & (~(back_slush >> 1));
-					es = s & even;
-					ec = back_slush + es;
-					ece = ec & (~back_slush);
-					od1 = ece & (~back_slush);
-
-					os = s & odd;
-					oc = back_slush + os;
-					oce = oc & (~back_slush);
-					od2 = oce * even;
-
-					od = od1 | od2;
-
-					q = q & (~od);
-
-					int x = q;
-
-					int itemp = 0;
-
-					while (x != 0) {
-						//  here  " ~
-						if (0 == state) {
-							idx = _tzcnt_u64(x);
-
-							for (int k = itemp; k < idx; ++k) {
-								tokens[real_token_arr_count] = tokens[i + k];
-								real_token_arr_count++;
-							}
-
-							start_idx = i + idx;
-							state = 1;
-						}
-						// " here ~
-						else {
-							idx = _tzcnt_u64(x);
-
-							Token temp = tokens[start_idx];
-							TokenUtil::len(temp) = TokenUtil::start(tokens[i + idx]) - TokenUtil::start(temp) + 1;
-
-							tokens[real_token_arr_count] = temp;
-							real_token_arr_count++;
-
-							itemp = idx + 1;
-
-							state = 0;
-						}
-
-						x = x & (x - 1);
-					}
-
-					for (int k = itemp; k < 32; ++k) {
-						tokens[real_token_arr_count] = tokens[i + k];
-						real_token_arr_count++;
-					}
-
-				}
-			}
-#endif
 			Token* real_tokens = (Token*)calloc(length, sizeof(Token));
 
 			token_count = 0;
+			
 			for (int i = 0; i < thr_num; ++i) { 
 				
 				size_t a = start[i];
+
+				int j = 0;
 				
 				// first find using simd.
-				size_t pre_token_start = start[i] + FindUsingSimd((char*)tokens + start[i], last[i] - start[i]);
+				size_t pre_token_start = start[i] + FindUsingSimd(text + start[i], last[i] - start[i]);
 				
 
 				if (pre_token_start > start[i]) {
-					real_tokens[token_count] = Get(tokens, start[i], pre_token_start - start[i], DATA);
+					real_tokens[token_count] = Get((uint8_t*)text, start[i], pre_token_start - start[i], DATA);
 					token_count++;
 				}
-
-				real_tokens[token_count] = Get(tokens, pre_token_start, 1, PreTokenUtil::upper_part(text[pre_token_start]));
-				token_count++;
 				
 				a = pre_token_start; // first token start idx!
 				
-				std::cout << "a : " << a << "\t";
-				std::cout << "start : " << start[i] << " " << "last : " << last[i] << "\n";
+				//std::cout << "a : " << a << "\t";
+				//std::cout << "start : " << start[i] << " " << "last : " << last[i] << "\n";
 				while (a < last[i]) {
-					int64_t diff = PreTokenUtil::lower_part(text[a]);
+					int64_t diff = PreTokenUtil::lower_part(tokens[start[i] + j]);
 
 					//std::cout << "diff " << (int)diff << "\n";
 
-					if (diff == 15) { // infinity?
-						//std::cout << "diff is 15" << " " << a + 1 << "\t";
+					if (diff == 255) { // infinity?
+						std::cout << "diff is over 255" << " " << a + 1 << "\t";
+
+						diff = 1 + FindUsingSimd(text + a + 1, last[i] - a - 1);
 						
-						diff = 1 + FindUsingSimd((char*)tokens + a + 1, last[i] - a - 1);
-						
-						//std::cout << (int)diff << "\n";
+						std::cout << (int)diff << "\n";
 					}
 
-					a = a + diff; // next token start idx!
 					
 					//std::cout << (int)diff << " , a : " << a << "\n";
 
 					if (diff == 0) {
 						break;
 					}
-					else {
-						real_tokens[token_count] = Get(tokens, a, 1, PreTokenUtil::upper_part(text[a]));
-						token_count++;
-					}
+
+					real_tokens[token_count] = Get((uint8_t*)text, a, 1, PreTokenUtil::upper_part(tokens[start[i] + j]));
+					token_count++;
+					
+					a = a + diff; // next token start idx!
+					
+					++j;
 				}
 
-				std::cout << "test " << a << "\n";
+				//std::cout << "test " << a << "\n";
 			
+			//std::cout << "token count " << token_count << "\n";
 			}
-			std::cout << "token count " << token_count << "\n";
-			
+			free(tokens);
+
 			auto c = std::chrono::steady_clock::now();
 			auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(b - a);
 			auto dur2 = std::chrono::duration_cast<std::chrono::milliseconds>(c - b);

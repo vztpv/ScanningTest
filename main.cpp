@@ -1,5 +1,5 @@
 
-#define USE_SIMD
+
 
 #include <iostream>
 
